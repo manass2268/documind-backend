@@ -1,7 +1,16 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    BackgroundTasks,
+    Depends,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 import uuid
 import random
@@ -18,7 +27,16 @@ from services.ai_service import (
 )
 from services.email_service import send_real_otp_email
 
-app = FastAPI(title="DocuMind API", version="2.5 RAG")
+# ==========================================
+# 🗄️ DATABASE IMPORTS & SETUP 🗄️
+# ==========================================
+from core.database import engine, Base, get_db
+from core import models
+
+# 🚀 THIS LINE AUTOCREATES TABLES IN POSTGRESQL ON STARTUP
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="DocuMind API", version="2.5 RAG & Postgres")
 
 # CORS Setup for React integration
 app.add_middleware(
@@ -53,9 +71,87 @@ class VerifyRequest(BaseModel):
     otp: str
 
 
+# Model Trainer Testing ke liye
+class TrainerCreate(BaseModel):
+    name: str
+    email: str
+    department: str
+
+
+# Model Trainer Login ke liye
+class TrainerLoginRequest(BaseModel):
+    email: str
+
+
 @app.get("/")
 def health_check():
     return {"status": "DocuMind Backend Server is Running!"}
+
+
+# ==========================================
+# 🗄️ ENDPOINT: TEST POSTGRESQL TRAINER
+# ==========================================
+@app.post("/api/test-trainer")
+def create_test_trainer(trainer: TrainerCreate, db: Session = Depends(get_db)):
+    # Check if trainer already exists
+    existing_trainer = (
+        db.query(models.Trainer).filter(models.Trainer.email == trainer.email).first()
+    )
+    if existing_trainer:
+        raise HTTPException(
+            status_code=400, detail="Trainer with this email already exists"
+        )
+
+    # Create new trainer object
+    new_trainer = models.Trainer(
+        name=trainer.name, email=trainer.email, department=trainer.department
+    )
+
+    # Save to PostgreSQL
+    db.add(new_trainer)
+    db.commit()
+    db.refresh(new_trainer)
+
+    return {
+        "status": "success",
+        "message": "Trainer added to Postgres!",
+        "data": new_trainer,
+    }
+
+
+# ==========================================
+# 🔐 ENDPOINT: TRAINER LOGIN (PostgreSQL Check)
+# ==========================================
+@app.post("/api/trainer/login")
+def trainer_login(req: TrainerLoginRequest, db: Session = Depends(get_db)):
+    # 1. Check if email exists in PostgreSQL 'trainers' table
+    trainer = db.query(models.Trainer).filter(models.Trainer.email == req.email).first()
+
+    if not trainer:
+        # Agar email DB mein nahi hai, toh access deny kar do
+        raise HTTPException(
+            status_code=404, detail="Trainer account not found. Access Denied."
+        )
+
+    if not trainer.is_active:
+        # Agar account deactivate kar diya gaya hai
+        raise HTTPException(
+            status_code=403,
+            detail="Your trainer account has been deactivated. Contact Admin.",
+        )
+
+    # 2. Return Success with Trainer Data
+    return {
+        "status": "success",
+        "message": "Welcome back, Trainer!",
+        "role": "trainer",
+        "data": {
+            "id": trainer.id,
+            "name": trainer.name,
+            "email": trainer.email,
+            "department": trainer.department,
+        },
+    }
 
 
 # ==========================================
@@ -63,7 +159,6 @@ def health_check():
 # ==========================================
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    # 'text/event-stream' ensures the response is not buffered and streams instantly
     return StreamingResponse(
         stream_chat_response(request.query, request.document_id, request.role),
         media_type="text/event-stream",
@@ -76,7 +171,7 @@ async def chat_endpoint(request: ChatRequest):
 @app.post("/api/process-image")
 async def process_image_endpoint(
     image: UploadFile = File(...),
-    role: str = Form("learner"),  # 🚀 Accept role from frontend form-data
+    role: str = Form("learner"),
 ):
     if not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File provided is not an image.")
@@ -91,14 +186,13 @@ async def process_image_endpoint(
 @app.post("/api/upload-pdf")
 async def upload_pdf_endpoint(
     file: UploadFile = File(...),
-    role: str = Form("learner"),  # 🚀 Accept role from frontend form-data
+    role: str = Form("learner"),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed!")
 
     file_bytes = await file.read()
 
-    # Check 5MB Limit
     MAX_SIZE = 5 * 1024 * 1024
     if len(file_bytes) > MAX_SIZE:
         raise HTTPException(
@@ -106,7 +200,6 @@ async def upload_pdf_endpoint(
             detail=f"File is too large! Max allowed is 5MB. Your file is {len(file_bytes) / (1024*1024):.2f}MB.",
         )
 
-    # Generate unique ID for Vector DB storage
     document_id = str(uuid.uuid4())
     success, message = await process_and_store_pdf(file_bytes, document_id, role)
 
@@ -126,17 +219,10 @@ async def upload_pdf_endpoint(
 # ==========================================
 @app.post("/api/send-otp")
 async def send_otp_endpoint(req: EmailRequest, background_tasks: BackgroundTasks):
-    # 1. Generate random 6 digit OTP
     otp_code = str(random.randint(100000, 999999))
-
-    # 2. Store it temporarily in dictionary
     generated_otps[req.email] = otp_code
-    print(f"OTP generated for {req.email}: {otp_code}")  # Backend terminal me dikhega
-
-    # 3. 🚀 SEND EMAIL IN BACKGROUND 🚀
+    print(f"OTP generated for {req.email}: {otp_code}")
     background_tasks.add_task(send_real_otp_email, req.email, otp_code)
-
-    # 4. Return success response IMMEDIATELY
     return {"status": "success", "message": "OTP sent successfully in the background!"}
 
 
@@ -145,18 +231,15 @@ async def send_otp_endpoint(req: EmailRequest, background_tasks: BackgroundTasks
 # ==========================================
 @app.post("/api/verify-otp")
 async def verify_otp_endpoint(req: VerifyRequest):
-    # 1. Check if email exists in our temporary storage
     if req.email not in generated_otps:
         raise HTTPException(
             status_code=400,
             detail="No OTP found for this email. Please request a new one.",
         )
 
-    # 2. Check if the OTP matches
     stored_otp = generated_otps[req.email]
 
     if req.otp == stored_otp:
-        # OTP is correct! Delete it so it can't be used twice.
         del generated_otps[req.email]
         return {"status": "success", "message": "OTP Verified Successfully!"}
     else:
