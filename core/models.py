@@ -1,4 +1,3 @@
-
 from sqlalchemy import (
     Column,
     Integer,
@@ -17,7 +16,7 @@ from core.database import Base
 
 # ==================================================
 # 1. USERS
-# Central account table
+# Central account table (Login, Email, Name)
 # ==================================================
 class User(Base):
     __tablename__ = "users"
@@ -25,27 +24,17 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     # Firebase authentication identity
-    firebase_uid = Column(
-        String(128), unique=True, index=True, nullable=True
-    )
+    firebase_uid = Column(String(128), unique=True, index=True, nullable=True)
 
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(150), nullable=False)
     role = Column(String(30), nullable=False, default="learner")
     is_active = Column(Boolean, nullable=False, default=True)
 
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # One account can have a student or trainer profile
-    student_profile = relationship(
-        "Student", back_populates="user", uselist=False
-    )
-
-    trainer_profile = relationship(
-        "Trainer", back_populates="user", uselist=False
-    )
+    student_profile = relationship("Student", back_populates="user", uselist=False)
+    trainer_profile = relationship("Trainer", back_populates="user", uselist=False)
 
 
 # ==================================================
@@ -85,7 +74,6 @@ class Course(Base):
 
 # ==================================================
 # 4. TRAINERS
-# trainer user_id is BOTH PK and FK to users.id
 # ==================================================
 class Trainer(Base):
     __tablename__ = "trainers"
@@ -108,13 +96,8 @@ class Trainer(Base):
     is_active = Column(Boolean, nullable=False, default=True)
 
     user = relationship("User", back_populates="trainer_profile")
-
     department = relationship("Department", back_populates="trainers")
-
-    teaching_assignments = relationship(
-        "TeachingAssignment",
-        back_populates="trainer",
-    )
+    teaching_assignments = relationship("TeachingAssignment", back_populates="trainer")
 
 
 # ==================================================
@@ -134,11 +117,9 @@ class Batch(Base):
 
     batch_name = Column(String(100), nullable=False)
     academic_session = Column(String(30), nullable=True)
-
     is_active = Column(Boolean, nullable=False, default=True)
 
     course = relationship("Course", back_populates="batches")
-
     sections = relationship("Section", back_populates="batch")
 
 
@@ -169,20 +150,12 @@ class Section(Base):
     )
 
     batch = relationship("Batch", back_populates="sections")
-
-    student_enrollments = relationship(
-        "StudentEnrollment",
-        back_populates="section",
-    )
-
-    teaching_assignments = relationship(
-        "TeachingAssignment",
-        back_populates="section",
-    )
+    student_enrollments = relationship("StudentEnrollment", back_populates="section")
+    teaching_assignments = relationship("TeachingAssignment", back_populates="section")
 
 
 # ==================================================
-# 7. STUDENTS
+# 7. STUDENTS (🚀 UPDATED WITH NEW COLUMNS)
 # roll_no is the PRIMARY KEY
 # ==================================================
 class Student(Base):
@@ -190,7 +163,7 @@ class Student(Base):
 
     roll_no = Column(String(50), primary_key=True, index=True)
 
-    # Connect student profile to central account
+    # Connect student profile to central account (for login Name/Email)
     user_id = Column(
         Integer,
         ForeignKey("users.id"),
@@ -198,21 +171,20 @@ class Student(Base):
         nullable=False,
     )
 
-    admission_status = Column(
-        String(30), nullable=False, default="active"
-    )
+    # 🚀 NEW: Extra fields for Excel upload & real-world use
+    phone_no = Column(String(20), nullable=True)
+    father_name = Column(String(150), nullable=True)
+    father_phone_no = Column(String(20), nullable=True)
+    # address = Column(String(500), nullable=True)  <-- Future me zarurat pade toh aise add kar lena
+
+    admission_status = Column(String(30), nullable=False, default="active")
 
     user = relationship("User", back_populates="student_profile")
-
-    enrollments = relationship(
-        "StudentEnrollment",
-        back_populates="student",
-    )
+    enrollments = relationship("StudentEnrollment", back_populates="student")
 
 
 # ==================================================
 # 8. STUDENT ENROLLMENTS
-# Student mapped by roll_no
 # Composite PK: roll_no + section_id
 # ==================================================
 class StudentEnrollment(Base):
@@ -230,10 +202,7 @@ class StudentEnrollment(Base):
         nullable=False,
     )
 
-    enrolled_at = Column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
+    enrolled_at = Column(DateTime(timezone=True), server_default=func.now())
     status = Column(String(30), nullable=False, default="active")
 
     __table_args__ = (
@@ -245,7 +214,6 @@ class StudentEnrollment(Base):
     )
 
     student = relationship("Student", back_populates="enrollments")
-
     section = relationship("Section", back_populates="student_enrollments")
 
 
@@ -260,15 +228,11 @@ class Subject(Base):
     subject_name = Column(String(150), unique=True, nullable=False)
     subject_code = Column(String(50), unique=True, nullable=True)
 
-    teaching_assignments = relationship(
-        "TeachingAssignment",
-        back_populates="subject",
-    )
+    teaching_assignments = relationship("TeachingAssignment", back_populates="subject")
 
 
 # ==================================================
 # 10. TEACHING ASSIGNMENTS
-# Trainer mapped by trainer_user_id
 # Composite PK: trainer + section + subject
 # ==================================================
 class TeachingAssignment(Base):
@@ -292,10 +256,7 @@ class TeachingAssignment(Base):
         nullable=False,
     )
 
-    assigned_at = Column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
@@ -307,14 +268,6 @@ class TeachingAssignment(Base):
         ),
     )
 
-    trainer = relationship(
-        "Trainer", back_populates="teaching_assignments"
-    )
-
-    section = relationship(
-        "Section", back_populates="teaching_assignments"
-    )
-
-    subject = relationship(
-        "Subject", back_populates="teaching_assignments"
-    )
+    trainer = relationship("Trainer", back_populates="teaching_assignments")
+    section = relationship("Section", back_populates="teaching_assignments")
+    subject = relationship("Subject", back_populates="teaching_assignments")
