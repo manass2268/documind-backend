@@ -53,7 +53,7 @@ def get_trainer_dashboard(firebase_uid: str, db: Session = Depends(get_db)):
             "stats": {
                 "students": total_students,
                 "subjects": len(assignments),
-                "docs": 12,  # Dummy for now (jab docs table banegi tab update karenge)
+                "docs": 12,
                 "pending": 5,  # Dummy for now
             },
             "classes": classes_data,
